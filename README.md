@@ -10,7 +10,7 @@ You'll need the [BluePy library](https://github.com/IanHarvey/bluepy) to talk to
 
 ## Files
 
-* camacontrol - the main process. Run as a non-root user after you permit DBUS transactions from non-privileged processes. [See here for details.](https://github.com/IanHarvey/bluepy)
+* camacontrol - the main process. Run as a non-root user after you permit DBUS transactions from non-privileged processes. [See here for details.](https://www.raspberrypi.org/forums/viewtopic.php?t=108581)
 * camacontrol.service - a systemd template to daemonize the above.
 * camacontrol.pygatt - DEPRICATED. An older version of the code built against the pygatt library vs. BluePy. Left here for posterity/in case anybody wants to update it. 
 
