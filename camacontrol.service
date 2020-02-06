@@ -1,0 +1,13 @@
+[Unit]
+Description=CamaControl
+After=multiuser.target
+
+[Service]
+ExecStart=/opt/camacontrol/camacontrol
+
+Restart=on-failure
+User=casa
+Group=casa
+
+[Install]
+WantedBy=multi-user.target

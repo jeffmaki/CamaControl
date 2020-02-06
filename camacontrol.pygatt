@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+from __future__ import print_function
+
+import urllib.parse
+import socketserver
+import http.server
+
+import pygatt
+import logging
+
+logging.basicConfig()
+logging.getLogger('pygatt').setLevel(logging.DEBUG)
+
+# ********************* BED BT UART COMMAND DICTIONARY
+
+COMMANDS                   = dict()
+
+COMMANDS['CMD/DISCONNECT'] = b'\x5A\x0D\x00\xA5'
+COMMANDS['CMD/CONNECT']    = b'\x5A\x0B\x00\xA5'
+COMMANDS['CMD/ZEROG']      = b'\x5A\x01\x03\x10\x30\x13\xA5'
+COMMANDS['CMD/FLAT']       = b'\x5A\x01\x03\x10\x30\x10\xA5'
+
+COMMANDS['HEAD/UP']        = b'\x5A\x01\x03\x10\x30\x00\xA5'
+COMMANDS['HEAD/DOWN']      = b'\x5A\x01\x03\x10\x30\x01\xA5'
+
+COMMANDS['FEET/UP']        = b'\x5A\x01\x03\x10\x30\x02\xA5'
+COMMANDS['FEET/DOWN']      = b'\x5A\x01\x03\x10\x30\x03\xA5'
+
+COMMANDS['LUMBAR/UP']      = b'\x5A\x01\x03\x10\x30\x06\xA5'
+COMMANDS['LUMBAR/DOWN']    = b'\x5A\x01\x03\x10\x30\x07\xA5'
+
+
+# ********************* HTTP SERVER CLASS
+
+def HandlerFactory(adapter):
+    class Handler(http.server.BaseHTTPRequestHandler):	
+
+        # bluetooth device handle
+        device = None
+
+        def __del__(self): 
+            # This tells the bed to no longer expect commands from us
+            self.write_to_bed(COMMANDS["CMD/DISCONNECT"], False)
+
+
+        def log_message(self, *args):
+            pass
+
+
+        # Writes commands (i.e. no expected response) to BT UART handle 0xE 
+        def write_to_bed(self, value, retry = True):
+            self.connect_to_bed()
+
+            try:
+                self.device.char_write_handle(0x000e, value, False)
+                return True
+            except:
+                if retry == False:
+                    return retry
+                else:
+                    return self.write_to_bed(value, False);
+
+
+        def connect_to_bed(self):
+            while self.device is None:
+                try:
+                    self.device = adapter.connect('C2:2D:A4:0F:D7:5D', 2, pygatt.BLEAddressType.random) # 2 = 2 second timeout
+
+                    # This tells the bed to expect commands from us going forward
+                    self.write_to_bed(COMMANDS["CMD/CONNECT"])
+                except:
+                    continue
+
+
+        def do_GET(self):
+            request = urllib.parse.urlparse(self.path)
+            command_key = request.path.strip("/").upper()
+
+            if command_key in COMMANDS.keys():
+                self.send_response(200)
+                self.end_headers()
+
+                if self.write_to_bed(COMMANDS[command_key]):
+                     self.wfile.write("{ result: 'success' }".encode("utf-8"))
+                else:
+                     self.wfile.write("{ result: 'fail' }".encode("utf-8"))
+            else:
+                self.send_error(404, "valid verbs: " + ', '.join(COMMANDS.keys()))
+
+            return
+
+    # end factory
+    return Handler
+
+
+
+# ********************** INIT
+
+adapter = pygatt.GATTToolBackend()
+
+# 5 = 5 second timeout
+# False = don't "restart" (if you set to True, this process will require root privileges.
+adapter.start(False, 5) 
+
+try:
+        server = http.server.HTTPServer(('', 8080), HandlerFactory(adapter))
+        print('Started HTTP server')
+        server.serve_forever()
+
+except KeyboardInterrupt:
+        print('^C received, shutting down the web server')
+        server.socket.close()

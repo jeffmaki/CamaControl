@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+from __future__ import print_function
+
+import urllib.parse
+import socketserver
+import http.server
+import socket
+
+from bluepy.btle import Peripheral
+import logging
+import time
+
+# ********************* BED BT UART COMMAND DICTIONARY
+
+COMMANDS                   = dict()
+
+COMMANDS['CMD/DISCONNECT'] = b'\x5A\x0D\x00\xA5'
+COMMANDS['CMD/CONNECT']    = b'\x5A\x0B\x00\xA5'
+
+COMMANDS['CMD/ZEROG']      = b'\x5A\x01\x03\x10\x30\x13\xA5'
+COMMANDS['CMD/FLAT']       = b'\x5A\x01\x03\x10\x30\x10\xA5'
+COMMANDS['CMD/LOUNGE']     = b'\x5A\x01\x03\x10\x30\x17\xA5'
+COMMANDS['CMD/INCLINE']    = b'\x5A\x01\x03\x10\x30\x18\xA5'
+
+COMMANDS['STOREAS/ZEROG']  = b'\x5A\x01\x03\x10\x30\x23\xA5'
+COMMANDS['STOREAS/FLAT']   = b'\x5A\x01\x03\x10\x30\x20\xA5'
+COMMANDS['STOREAS/LOUNGE'] = b'\x5A\x01\x03\x10\x30\x27\xA5'
+COMMANDS['STOREAS/INCLINE']= b'\x5A\x01\x03\x10\x30\x28\xA5'
+
+COMMANDS['HEAD/UP']        = b'\x5A\x01\x03\x10\x30\x00\xA5'
+COMMANDS['HEAD/DOWN']      = b'\x5A\x01\x03\x10\x30\x01\xA5'
+
+COMMANDS['FEET/UP']        = b'\x5A\x01\x03\x10\x30\x02\xA5'
+COMMANDS['FEET/DOWN']      = b'\x5A\x01\x03\x10\x30\x03\xA5'
+
+COMMANDS['LUMBAR/UP']      = b'\x5A\x01\x03\x10\x30\x06\xA5'
+COMMANDS['LUMBAR/DOWN']    = b'\x5A\x01\x03\x10\x30\x07\xA5'
+
+
+# ********************* HTTP SERVER CLASS
+
+def HandlerFactory():
+    class Handler(http.server.BaseHTTPRequestHandler):	
+
+        # bluetooth device handle
+        device = None
+
+        def cleanup(self): 
+            # This tells the bed to no longer expect commands from us
+            self.write_to_bed(COMMANDS["CMD/DISCONNECT"], 1)
+
+            self.device.disconnect()
+            self.device = None
+
+            print("Disconnected from bed.")
+
+
+        def log_message(self, *args):
+            pass
+
+
+        # Writes commands (i.e. no expected response) to BT UART handle 0xE 
+        def write_to_bed(self, value, retry = 5):
+             self.connect_to_bed()
+
+             try:
+                 self.device.writeCharacteristic(0x000e, value, False)
+                 time.sleep(1/4)
+
+                 print("Wrote command '" + str(value) + "' to bed successfully.")
+                 return True
+             except Exception as e:
+                 print("Failed to write command to bed. Retry = " + str(retry) + " Error=" + str(e))
+
+                 if retry > 0:
+                     retry = retry - 1
+                     return self.write_to_bed(value, retry);
+                 else:
+                     return False
+
+
+        def connect_to_bed(self):
+            while self.device is None:
+                try:
+                    self.device = Peripheral('C2:2D:A4:0F:D7:5D', "random")
+                    print("Connected to bed.")
+
+                    # This tells the bed to expect commands from us going forward
+                    self.write_to_bed(COMMANDS["CMD/CONNECT"])
+                except:
+                    print("Failed to connect to bed. Will retry.")
+                    time.sleep(1)
+                    continue
+
+
+        def do_GET(self):
+            request = urllib.parse.urlparse(self.path)
+            command_key = request.path.strip("/").upper()
+
+            try:
+                if command_key in COMMANDS.keys():
+                    self.send_response(200)
+                    self.end_headers()
+ 
+                    if self.write_to_bed(COMMANDS[command_key]):
+                         self.wfile.write("{ result: 'success' }".encode("utf-8"))
+                    else:
+                         self.wfile.write("{ result: 'fail' }".encode("utf-8"))
+                else:
+                    self.send_error(404, "valid verbs: " + ', '.join(COMMANDS.keys()))
+            except socket.error:
+                pass
+            finally:
+                self.cleanup()
+
+            return
+
+    # end factory
+    return Handler
+
+
+
+# ********************** INIT
+
+try:
+        server = http.server.HTTPServer(('127.0.0.1', 8080), HandlerFactory())
+        print('Started HTTP server')
+        server.serve_forever()
+
+except KeyboardInterrupt:
+        print('^C received, shutting down the web server')
+        server.socket.close()
